@@ -1,0 +1,980 @@
+Directory structure:
+└── 2025_7_2-cursor/
+    ├── requirements.txt
+    ├── backend/
+    │   └── app.py
+    └── frontend/
+        ├── index.html
+        ├── css/
+        │   └── style.css
+        └── js/
+            └── app.js
+
+================================================
+FILE: requirements.txt
+================================================
+Flask
+Flask-SQLAlchemy
+SQLAlchemy
+
+
+
+================================================
+FILE: backend/app.py
+================================================
+# ========== 导入必要的库 ==========
+from flask import Flask, jsonify, request, send_from_directory
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+import os
+
+# ========== 创建 Flask 应用 ==========
+app = Flask(__name__)
+
+# ========== 配置数据库 ==========
+# 获取项目根目录
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+# 数据库文件路径
+DB_PATH = os.path.join(os.path.dirname(BASE_DIR), 'database', 'documents.db')
+# 确保 database 目录存在
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+# 配置 SQLite 数据库
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['JSON_AS_ASCII'] = False  # 支持中文
+
+# 初始化数据库
+db = SQLAlchemy(app)
+
+print('=' * 50)
+print('📚 文档系统后端启动中...')
+print(f'📁 数据库路径: {DB_PATH}')
+print('=' * 50)
+
+# ========== 定义数据模型 ==========
+class Document(db.Model):
+    """文档模型"""
+    __tablename__ = 'documents'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    content = db.Column(db.Text, default='')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        """将对象转换为字典"""
+        return {
+            'id': self.id,
+            'title': self.title,
+            'content': self.content,
+            'createdAt': self.created_at.isoformat(),
+            'updatedAt': self.updated_at.isoformat()
+        }
+    
+    def __repr__(self):
+        return f'<Document {self.id}: {self.title}>'
+
+# ========== 创建数据库表 ==========
+with app.app_context():
+    db.create_all()
+    print('✅ 数据库表创建成功！')
+
+# ========== 静态文件路由 ==========
+@app.route('/')
+def index():
+    """返回前端页面"""
+    return send_from_directory('../frontend', 'index.html')
+
+@app.route('/<path:path>')
+def static_files(path):
+    """返回静态文件（CSS、JS等）"""
+    return send_from_directory('../frontend', path)
+
+# ========== API 路由：获取所有文档 ==========
+@app.route('/api/documents', methods=['GET'])
+def get_documents():
+    """获取所有文档列表"""
+    try:
+        # 查询所有文档，按更新时间倒序排列
+        documents = Document.query.order_by(Document.updated_at.desc()).all()
+        
+        # 转换为字典列表
+        docs_list = [doc.to_dict() for doc in documents]
+        
+        print(f'📋 获取文档列表: {len(docs_list)} 个文档')
+        
+        return jsonify({
+            'success': True,
+            'data': docs_list,
+            'total': len(docs_list)
+        })
+    except Exception as e:
+        print(f'❌ 获取文档列表失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+# ========== API 路由：获取单个文档 ==========
+@app.route('/api/documents/<int:doc_id>', methods=['GET'])
+def get_document(doc_id):
+    """获取指定 ID 的文档"""
+    try:
+        document = Document.query.get(doc_id)
+        
+        if not document:
+            return jsonify({
+                'success': False,
+                'message': '文档不存在'
+            }), 404
+        
+        print(f'📄 获取文档: {document.title}')
+        
+        return jsonify({
+            'success': True,
+            'data': document.to_dict()
+        })
+    except Exception as e:
+        print(f'❌ 获取文档失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+# ========== API 路由：创建文档 ==========
+@app.route('/api/documents', methods=['POST'])
+def create_document():
+    """创建新文档"""
+    try:
+        # 获取请求数据
+        data = request.get_json()
+        
+        # 验证必填字段
+        if not data or not data.get('title'):
+            return jsonify({
+                'success': False,
+                'message': '标题不能为空'
+            }), 400
+        
+        # 创建新文档
+        new_doc = Document(
+            title=data['title'],
+            content=data.get('content', f"# {data['title']}\n\n开始编写你的内容...")
+        )
+        
+        # 保存到数据库
+        db.session.add(new_doc)
+        db.session.commit()
+        
+        print(f'✅ 创建文档成功: {new_doc.title}')
+        
+        return jsonify({
+            'success': True,
+            'data': new_doc.to_dict(),
+            'message': '文档创建成功'
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        print(f'❌ 创建文档失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+# ========== API 路由：更新文档 ==========
+@app.route('/api/documents/<int:doc_id>', methods=['PUT'])
+def update_document(doc_id):
+    """更新文档内容"""
+    try:
+        document = Document.query.get(doc_id)
+        
+        if not document:
+            return jsonify({
+                'success': False,
+                'message': '文档不存在'
+            }), 404
+        
+        # 获取请求数据
+        data = request.get_json()
+        
+        # 更新字段
+        if 'title' in data:
+            document.title = data['title']
+        if 'content' in data:
+            document.content = data['content']
+        
+        document.updated_at = datetime.utcnow()
+        
+        # 保存到数据库
+        db.session.commit()
+        
+        print(f'✅ 更新文档成功: {document.title}')
+        
+        return jsonify({
+            'success': True,
+            'data': document.to_dict(),
+            'message': '文档更新成功'
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f'❌ 更新文档失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+# ========== API 路由：删除文档 ==========
+@app.route('/api/documents/<int:doc_id>', methods=['DELETE'])
+def delete_document(doc_id):
+    """删除文档"""
+    try:
+        document = Document.query.get(doc_id)
+        
+        if not document:
+            return jsonify({
+                'success': False,
+                'message': '文档不存在'
+            }), 404
+        
+        doc_title = document.title
+        
+        # 从数据库删除
+        db.session.delete(document)
+        db.session.commit()
+        
+        print(f'✅ 删除文档成功: {doc_title}')
+        
+        return jsonify({
+            'success': True,
+            'message': '文档删除成功'
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f'❌ 删除文档失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+# ========== 启动应用 ==========
+if __name__ == '__main__':
+    print('🚀 服务器启动成功！')
+    print('📍 访问地址: http://127.0.0.1:5000')
+    print('=' * 50)
+    app.run(debug=True, host='0.0.0.0', port=5000)
+
+
+
+================================================
+FILE: frontend/index.html
+================================================
+[Binary file]
+
+
+================================================
+FILE: frontend/css/style.css
+================================================
+/* ========== 全局样式 ========== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background-color: #f5f5f5;
+    color: hsl(0, 0%, 20%);
+}
+
+/* ========== 容器布局 ========== */
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ========== 顶部标题栏 ========== */
+.header {
+    background-color: #1890ff;
+    color: white;
+    padding: 15px 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.header h1 {
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.user-info {
+    font-size: 14px;
+}
+
+/* ========== 主内容区域 ========== */
+.main-content {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ========== 左侧边栏样式 ========== */
+.sidebar {
+    width: 280px;
+    background-color: #fff;
+    border-right: 1px solid #e8e8e8;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid #e8e8e8;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sidebar-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+/* 新建按钮样式 */
+.btn-new {
+    background-color: #1890ff;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s;
+}
+
+.btn-new:hover {
+    background-color: #40a9ff;
+}
+
+/* 文档列表容器 */
+.doc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+/* 单个文档项 */
+.doc-item {
+    padding: 12px 16px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+}
+
+.doc-item:hover {
+    background-color: #f0f0f0;
+}
+
+/* 选中的文档项 */
+.doc-item.active {
+    background-color: #e6f7ff;
+    border-left: 3px solid #1890ff;
+}
+
+.doc-title {
+    font-size: 14px;
+    color: #333;
+}
+
+/* ========== 右侧内容区域样式 ========== */
+.content-area {
+    flex: 1;
+    background-color: #fff;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ========== 内容头部操作按钮 ========== */
+.content-header {
+    padding: 20px 30px;
+    border-bottom: 1px solid #e8e8e8;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-save,
+.btn-delete {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.btn-save {
+    background-color: #52c41a;
+    color: white;
+}
+
+.btn-save:hover {
+    background-color: #73d13d;
+}
+
+.btn-delete {
+    background-color: #ff4d4f;
+    color: white;
+}
+
+.btn-delete:hover {
+    background-color: #ff7875;
+}
+
+/* ========== 编辑器容器 ========== */
+.editor-container {
+    flex: 1;
+    padding: 20px;
+    overflow: hidden;
+}
+
+.editor-container .CodeMirror {
+    height: 100% !important;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* ========== 文档列表项增强 ========== */
+.doc-item-content {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.doc-time {
+    font-size: 12px;
+    color: #999;
+}
+
+/* ========== 通知样式 ========== */
+.notification {
+    position: fixed;
+    top: 80px;
+    right: -300px;
+    background-color: #fff;
+    color: #333;
+    padding: 15px 25px;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: right 0.3s ease;
+    z-index: 9999;
+    font-size: 14px;
+}
+
+.notification.show {
+    right: 30px;
+}
+
+/* ========== 内容区域文本样式 ========== */
+.content-body h1 {
+    font-size: 28px;
+    margin-bottom: 20px;
+    color: #1890ff;
+}
+
+.content-body h2 {
+    font-size: 22px;
+    margin-top: 30px;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.content-body p {
+    margin-bottom: 15px;
+    color: #666;
+}
+
+.content-body ul {
+    margin-left: 20px;
+    margin-bottom: 15px;
+}
+
+.content-body li {
+    margin-bottom: 8px;
+    color: #666;
+}
+
+/* ========== 滚动条美化 ========== */
+.doc-list::-webkit-scrollbar,
+.content-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.doc-list::-webkit-scrollbar-track,
+.content-body::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+.doc-list::-webkit-scrollbar-thumb,
+.content-body::-webkit-scrollbar-thumb {
+    background: #ccc;
+    border-radius: 3px;
+}
+
+.doc-list::-webkit-scrollbar-thumb:hover,
+.content-body::-webkit-scrollbar-thumb:hover {
+    background: #999;
+}
+
+
+
+================================================
+FILE: frontend/js/app.js
+================================================
+// ========== 全局变量 ==========
+let documents = [];  // 存储所有文档
+let currentDocId = null;  // 当前选中的文档 ID
+let easyMDE = null;  // Markdown 编辑器实例
+let autoSaveTimer = null;  // 自动保存定时器
+
+// 后端 API 地址
+const API_BASE_URL = 'http://127.0.0.1:5000/api';
+
+// ========== 页面加载完成后执行 ==========
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('📚 文档系统启动...');
+    
+    // 初始化 Markdown 编辑器
+    initMarkdownEditor();
+    
+    // 从后端加载文档
+    loadDocumentsFromServer();
+    
+    // 绑定事件监听器
+    bindEvents();
+    
+    console.log('✅ 系统初始化完成！');
+});
+
+// ========== 初始化 Markdown 编辑器 ==========
+function initMarkdownEditor() {
+    console.log('初始化 Markdown 编辑器...');
+    
+    const textarea = document.getElementById('mdEditor');
+    
+    easyMDE = new EasyMDE({
+        element: textarea,
+        autofocus: false,
+        spellChecker: false,
+        placeholder: '开始编写你的文档...',
+        toolbar: [
+            'bold', 'italic', 'heading', '|',
+            'quote', 'unordered-list', 'ordered-list', '|',
+            'link', 'image', '|',
+            'preview', 'side-by-side', 'fullscreen', '|',
+            'guide'
+        ],
+        status: ['lines', 'words', 'cursor'],
+        tabSize: 4,
+    });
+    
+    // 监听编辑器内容变化
+    easyMDE.codemirror.on('change', function() {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(function() {
+            if (currentDocId) {
+                autoSaveDocument();
+            }
+        }, 3000);
+    });
+}
+
+// ========== 从服务器加载文档 ==========
+async function loadDocumentsFromServer() {
+    console.log('📡 从服务器加载文档...');
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents`);
+        const result = await response.json();
+        
+        if (result.success) {
+            documents = result.data;
+            console.log(`✅ 加载了 ${documents.length} 个文档`);
+            
+            // 渲染文档列表
+            renderDocList();
+            
+            // 如果有文档，选中第一个
+            if (documents.length > 0) {
+                selectDocument(documents[0].id);
+            } else {
+                // 没有文档时创建默认文档
+                createDefaultDocument();
+            }
+        } else {
+            console.error('❌ 加载文档失败:', result.message);
+            showNotification('❌ 加载文档失败！');
+        }
+    } catch (error) {
+        console.error('❌ 网络错误:', error);
+        showNotification('❌ 无法连接到服务器！');
+    }
+}
+
+// ========== 创建默认文档 ==========
+async function createDefaultDocument() {
+    console.log('创建默认文档...');
+    
+    const defaultDoc = {
+        title: '欢迎使用文档系统',
+        content: `# 欢迎使用我的文档系统！ 📚
+
+这是一个类似**语雀**的文档管理系统。
+
+## 功能特性 ✨
+
+- ✅ 创建和管理文档
+- ✅ Markdown 编辑器
+- ✅ 实时预览
+- ✅ 自动保存
+- ✅ 数据库存储
+
+## 开始使用 🚀
+
+1. 点击左侧的 **+ 新建** 按钮创建新文档
+2. 在编辑器中编写 Markdown 内容
+3. 系统会自动保存你的修改
+4. 点击 **💾 保存** 按钮手动保存
+
+## Markdown 语法示例
+
+### 代码块
+\`\`\`python
+def hello():
+    print("Hello, World!")
+\`\`\`
+
+### 列表
+- 无序列表项 1
+- 无序列表项 2
+
+### 引用
+> 这是一段引用文字
+
+**开始创建你的第一个文档吧！** 🎉`
+    };
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(defaultDoc)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            documents.push(result.data);
+            renderDocList();
+            selectDocument(result.data.id);
+        }
+    } catch (error) {
+        console.error('❌ 创建默认文档失败:', error);
+    }
+}
+
+// ========== 渲染文档列表 ==========
+function renderDocList() {
+    console.log('渲染文档列表...');
+    
+    const docListContainer = document.getElementById('docList');
+    docListContainer.innerHTML = '';
+    
+    if (documents.length === 0) {
+        docListContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">暂无文档</div>';
+        return;
+    }
+    
+    documents.forEach(doc => {
+        const docItem = document.createElement('div');
+        docItem.className = 'doc-item';
+        
+        if (doc.id === currentDocId) {
+            docItem.classList.add('active');
+        }
+        
+        docItem.dataset.docId = doc.id;
+        
+        docItem.innerHTML = `
+            <div class="doc-item-content">
+                <span class="doc-title">📄 ${doc.title}</span>
+                <span class="doc-time">${formatTime(doc.updatedAt)}</span>
+            </div>
+        `;
+        
+        docItem.addEventListener('click', function() {
+            const docId = parseInt(this.dataset.docId);
+            selectDocument(docId);
+        });
+        
+        docListContainer.appendChild(docItem);
+    });
+}
+
+// ========== 格式化时间 ==========
+function formatTime(timestamp) {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+    
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前';
+    if (diff < 604800000) return Math.floor(diff / 86400000) + '天前';
+    
+    return date.toLocaleDateString('zh-CN');
+}
+
+// ========== 选择文档 ==========
+function selectDocument(docId) {
+    console.log('选择文档:', docId);
+    
+    if (currentDocId === docId) {
+        return;
+    }
+    
+    currentDocId = docId;
+    renderDocList();
+    showDocument(docId);
+}
+
+// ========== 显示文档内容 ==========
+async function showDocument(docId) {
+    console.log('📡 从服务器获取文档:', docId);
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents/${docId}`);
+        const result = await response.json();
+        
+        if (result.success) {
+            const doc = result.data;
+            document.getElementById('currentDocTitle').textContent = doc.title;
+            easyMDE.value(doc.content);
+            console.log('✅ 文档加载完成');
+        } else {
+            showNotification('❌ 加载文档失败！');
+        }
+    } catch (error) {
+        console.error('❌ 网络错误:', error);
+        showNotification('❌ 无法连接到服务器！');
+    }
+}
+
+// ========== 绑定事件监听器 ==========
+function bindEvents() {
+    console.log('绑定事件监听器...');
+    
+    document.getElementById('btnNewDoc').addEventListener('click', createNewDocument);
+    document.getElementById('btnSave').addEventListener('click', saveCurrentDocument);
+    document.getElementById('btnDelete').addEventListener('click', deleteCurrentDocument);
+}
+
+// ========== 创建新文档 ==========
+async function createNewDocument() {
+    console.log('创建新文档...');
+    
+    const title = prompt('请输入文档标题：', '新文档');
+    
+    if (!title || title.trim() === '') {
+        alert('❌ 文档标题不能为空！');
+        return;
+    }
+    
+    const newDoc = {
+        title: title.trim(),
+        content: `# ${title.trim()}\n\n开始编写你的内容...`
+    };
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(newDoc)
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            documents.unshift(result.data);  // 添加到列表开头
+            renderDocList();
+            selectDocument(result.data.id);
+            showNotification('✅ 文档创建成功！');
+            console.log('✅ 新文档创建成功！', result.data);
+        } else {
+            showNotification('❌ 创建失败：' + result.message);
+        }
+    } catch (error) {
+        console.error('❌ 网络错误:', error);
+        showNotification('❌ 无法连接到服务器！');
+    }
+}
+
+// ========== 保存当前文档 ==========
+async function saveCurrentDocument() {
+    if (!currentDocId) {
+        alert('❌ 请先选择一个文档！');
+        return;
+    }
+    
+    console.log('💾 保存文档:', currentDocId);
+    
+    const content = easyMDE.value();
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents/${currentDocId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ content })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            // 更新本地文档数据
+            const doc = documents.find(d => d.id === currentDocId);
+            if (doc) {
+                doc.content = content;
+                doc.updatedAt = result.data.updatedAt;
+            }
+            renderDocList();
+            showNotification('💾 文档已保存！');
+            console.log('✅ 文档保存成功！');
+        } else {
+            showNotification('❌ 保存失败：' + result.message);
+        }
+    } catch (error) {
+        console.error('❌ 网络错误:', error);
+        showNotification('❌ 无法连接到服务器！');
+    }
+}
+
+// ========== 自动保存文档 ==========
+async function autoSaveDocument() {
+    if (!currentDocId) return;
+    
+    console.log('🔄 自动保存:', currentDocId);
+    
+    const content = easyMDE.value();
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents/${currentDocId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ content })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            const doc = documents.find(d => d.id === currentDocId);
+            if (doc) {
+                doc.updatedAt = result.data.updatedAt;
+            }
+            renderDocList();
+            showNotification('🔄 已自动保存', 1500);
+        }
+    } catch (error) {
+        console.error('❌ 自动保存失败:', error);
+    }
+}
+
+// ========== 删除当前文档 ==========
+async function deleteCurrentDocument() {
+    if (!currentDocId) {
+        alert('❌ 请先选择一个文档！');
+        return;
+    }
+    
+    const doc = documents.find(d => d.id === currentDocId);
+    
+    if (!confirm(`确定要删除文档"${doc.title}"吗？\n此操作无法撤销！`)) {
+        return;
+    }
+    
+    console.log('🗑️ 删除文档:', currentDocId);
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents/${currentDocId}`, {
+            method: 'DELETE'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            documents = documents.filter(d => d.id !== currentDocId);
+            const deletedId = currentDocId;
+            currentDocId = null;
+            
+            renderDocList();
+            
+            document.getElementById('currentDocTitle').textContent = '选择一个文档开始编辑';
+            easyMDE.value('');
+            
+            if (documents.length > 0) {
+                selectDocument(documents[0].id);
+            }
+            
+            showNotification('🗑️ 文档已删除！');
+            console.log('✅ 文档删除成功！');
+        } else {
+            showNotification('❌ 删除失败：' + result.message);
+        }
+    } catch (error) {
+        console.error('❌ 网络错误:', error);
+        showNotification('❌ 无法连接到服务器！');
+    }
+}
+
+// ========== 显示通知 ==========
+function showNotification(message, duration = 2000) {
+    const notification = document.createElement('div');
+    notification.className = 'notification';
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.classList.add('show');
+    }, 10);
+    
+    setTimeout(() => {
+        notification.classList.remove('show');
+        setTimeout(() => {
+            document.body.removeChild(notification);
+        }, 300);
+    }, duration);
+}
+
+

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的文档系统</title>
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- 引入 EasyMDE Markdown 编辑器的 CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+</head>
+<body>
+
+    <!-- 整个页面容器 -->
+    <div class="container">
+        <!-- 顶部标题栏 -->
+        <header class="header">
+            <h1>📚 我的文档系统</h1>
+            <div class="user-info">
+                <span>欢迎使用</span>
+            </div>
+        </header>
+
+        <!-- 主内容区域 -->
+        <div class="main-content">
+            <!-- 左侧边栏（文档列表） -->
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <h2>知识库</h2>
+                    <div class="header-buttons">
+                        <button class="btn-new btn-small" id="btnNewFolder" title="新建文件夹">📁+</button>
+                        <button class="btn-new btn-small" id="btnNewDoc" title="新建文档">📄+</button>
+                    </div>
+                </div>
+                
+                <!-- 搜索框 -->
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="🔍 搜索文档..." />
+                    <button class="btn-clear" id="btnClearSearch" style="display: none;">✕</button>
+                </div>
+                
+                <!-- 树形结构容器 -->
+                <div class="tree-container" id="treeContainer">
+                    <!-- 树形结构将在这里显示 -->
+                </div>
+            </aside>
+
+            <!-- 右侧内容显示区域 -->
+            <main class="content-area">
+                <div class="content-header">
+                    <div class="title-section">
+                        <h2 id="currentDocTitle">选择一个文档开始编辑</h2>
+                        <button class="btn-edit-title" id="btnEditTitle" style="display: none;">✏️</button>
+                    </div>
+                    <div class="header-actions">
+                        <span class="save-status" id="saveStatus"></span>
+                        <button class="btn-save" id="btnSave">💾 保存</button>
+                        <button class="btn-delete" id="btnDelete">🗑️ 删除</button>
+                    </div>
+                </div>
+                
+                <!-- Markdown 编辑器区域 -->
+                <div class="editor-container">
+                    <textarea id="mdEditor"></textarea>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- 引入 EasyMDE Markdown 编辑器的 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+    <!-- 引入我们自己的 JavaScript 文件 -->
+    <script src="js/app.js"></script>
+
+</body>
+</html>
