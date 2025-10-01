@@ -2,6 +2,7 @@
 let treeData = { folders: [], documents: [] };
 let currentDocId = null;
 let currentFolderId = null;
+let currentUser = null;
 let easyMDE = null;
 let autoSaveTimer = null;
 let expandedFolders = new Set();  // 记录展开的文件夹
@@ -11,14 +12,21 @@ const API_BASE_URL = 'http://127.0.0.1:5000/api';
 // ========== 搜索相关变量 ==========
 let searchKeyword = '';
 
+// ========== 排序相关变量 ==========
+let currentSortMode = 'updated';
+
 // ========== 页面加载完成后执行 ==========
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     console.log('📚 文档系统启动...');
 
+    // 先检查登录状态
+    await checkAuth();
+    
     initMarkdownEditor();
     initSearch();
     initKeyboardShortcuts();
     initTitleEdit();
+    initSort();
     loadTreeData();
     bindEvents();
     addStatsBar();
@@ -183,6 +191,29 @@ function createFolderElement(folder, level = 0) {
         showContextMenu(e, 'folder', folder.id);
     });
     
+    // 拖放到文件夹
+    node.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        node.classList.add('drag-over');
+    });
+    
+    node.addEventListener('dragleave', (e) => {
+        node.classList.remove('drag-over');
+    });
+    
+    node.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        node.classList.remove('drag-over');
+        
+        const docId = parseInt(e.dataTransfer.getData('text/plain'));
+        const type = e.dataTransfer.getData('type');
+        
+        if (type === 'document') {
+            await moveDocumentToFolder(docId, folder.id);
+        }
+    });
+    
     item.appendChild(node);
     
     // 子元素容器
@@ -219,6 +250,7 @@ function createDocumentElement(doc, level = 0) {
     const node = document.createElement('div');
     node.className = 'tree-node document';
     node.dataset.docId = doc.id;
+    node.draggable = true;
     
     if (doc.id === currentDocId) {
         node.classList.add('active');
@@ -239,6 +271,19 @@ function createDocumentElement(doc, level = 0) {
     node.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         showContextMenu(e, 'document', doc.id);
+    });
+    
+    // 拖拽开始
+    node.addEventListener('dragstart', (e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', doc.id);
+        e.dataTransfer.setData('type', 'document');
+        node.classList.add('dragging');
+    });
+    
+    // 拖拽结束
+    node.addEventListener('dragend', (e) => {
+        node.classList.remove('dragging');
     });
     
     item.appendChild(node);
@@ -318,6 +363,7 @@ function bindEvents() {
     document.getElementById('btnNewDoc').addEventListener('click', createNewDocument);
     document.getElementById('btnSave').addEventListener('click', saveCurrentDocument);
     document.getElementById('btnDelete').addEventListener('click', deleteCurrentDocument);
+    document.getElementById('btnLogout').addEventListener('click', handleLogout);
 
     // 监听编辑器变化
     easyMDE.codemirror.on('change', function() {
@@ -485,6 +531,7 @@ async function showDocument(docId) {
             const doc = result.data;
             document.getElementById('currentDocTitle').textContent = doc.title;
             easyMDE.value(doc.content);
+            showBreadcrumb(doc);
             console.log('✅ 文档加载完成');
         } else {
             showNotification('❌ 加载文档失败！');
@@ -940,4 +987,268 @@ function countDocuments(folders) {
         }
     });
     return count;
+}
+
+// ========== 移动文档到文件夹 ==========
+async function moveDocumentToFolder(docId, folderId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/documents/${docId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folder_id: folderId })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            await loadTreeData();
+            showNotification('✅ 文档已移动！');
+        } else {
+            showNotification('❌ 移动失败：' + result.message);
+        }
+    } catch (error) {
+        console.error('❌ 网络错误:', error);
+        showNotification('❌ 无法连接到服务器！');
+    }
+}
+
+// ========== 初始化排序按钮 ==========
+function initSort() {
+    const btnSort = document.getElementById('btnSort');
+    if (!btnSort) return;
+    
+    btnSort.addEventListener('click', function() {
+        showSortMenu(this);
+    });
+}
+
+// ========== 显示排序菜单 ==========
+function showSortMenu(btn) {
+    const existingMenu = document.querySelector('.sort-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+        return;
+    }
+    
+    const menu = document.createElement('div');
+    menu.className = 'sort-menu context-menu';
+    
+    const rect = btn.getBoundingClientRect();
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 5}px`;
+    
+    const sortModes = [
+        { id: 'updated', label: '按更新时间', icon: '🕒' },
+        { id: 'created', label: '按创建时间', icon: '📅' },
+        { id: 'title', label: '按标题', icon: '🔤' }
+    ];
+    
+    sortModes.forEach(mode => {
+        const item = document.createElement('div');
+        item.className = 'context-menu-item';
+        if (mode.id === currentSortMode) {
+            item.classList.add('active');
+        }
+        item.innerHTML = `${mode.icon} ${mode.label}`;
+        item.addEventListener('click', () => {
+            currentSortMode = mode.id;
+            sortDocuments();
+            menu.remove();
+        });
+        menu.appendChild(item);
+    });
+    
+    document.body.appendChild(menu);
+    
+    setTimeout(() => {
+        document.addEventListener('click', function closeMenu() {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+        });
+    }, 0);
+}
+
+// ========== 排序文档 ==========
+function sortDocuments() {
+    treeData.documents.sort((a, b) => {
+        switch(currentSortMode) {
+            case 'updated':
+                return new Date(b.updatedAt) - new Date(a.updatedAt);
+            case 'created':
+                return new Date(b.createdAt) - new Date(a.createdAt);
+            case 'title':
+                return a.title.localeCompare(b.title, 'zh-CN');
+            default:
+                return 0;
+        }
+    });
+    
+    sortFolderDocuments(treeData.folders);
+    renderTree();
+    showNotification(`✅ 已按${getSortLabel()}排序`);
+}
+
+// ========== 排序文件夹中的文档 ==========
+function sortFolderDocuments(folders) {
+    folders.forEach(folder => {
+        if (folder.documents) {
+            folder.documents.sort((a, b) => {
+                switch(currentSortMode) {
+                    case 'updated':
+                        return new Date(b.updatedAt) - new Date(a.updatedAt);
+                    case 'created':
+                        return new Date(b.createdAt) - new Date(a.createdAt);
+                    case 'title':
+                        return a.title.localeCompare(b.title, 'zh-CN');
+                    default:
+                        return 0;
+                }
+            });
+        }
+        if (folder.children) {
+            sortFolderDocuments(folder.children);
+        }
+    });
+}
+
+// ========== 获取排序标签 ==========
+function getSortLabel() {
+    const labels = {
+        'updated': '更新时间',
+        'created': '创建时间',
+        'title': '标题'
+    };
+    return labels[currentSortMode] || '默认';
+}
+
+// ========== 显示面包屑导航 ==========
+function showBreadcrumb(doc) {
+    const breadcrumb = document.getElementById('breadcrumb');
+    if (!breadcrumb) return;
+    
+    if (!doc.folder_id) {
+        breadcrumb.style.display = 'none';
+        return;
+    }
+    
+    breadcrumb.style.display = 'block';
+    const path = getDocumentPath(doc.folder_id);
+    
+    breadcrumb.innerHTML = '<span class="breadcrumb-item" data-folder-id="">📂 根目录</span>';
+    
+    path.forEach((folder) => {
+        breadcrumb.innerHTML += `
+            <span class="breadcrumb-separator">›</span>
+            <span class="breadcrumb-item" data-folder-id="${folder.id}">📁 ${folder.name}</span>
+        `;
+    });
+    
+    breadcrumb.querySelectorAll('.breadcrumb-item').forEach(item => {
+        item.addEventListener('click', function() {
+            const folderId = this.dataset.folderId;
+            if (folderId) {
+                scrollToFolder(parseInt(folderId));
+            } else {
+                scrollToTop();
+            }
+        });
+    });
+}
+
+// ========== 获取文档路径 ==========
+function getDocumentPath(folderId) {
+    const path = [];
+    let folder = findFolderById(treeData.folders, folderId);
+    
+    while (folder) {
+        path.unshift(folder);
+        folder = folder.parent_id ? findFolderById(treeData.folders, folder.parent_id) : null;
+    }
+    
+    return path;
+}
+
+// ========== 查找文件夹 ==========
+function findFolderById(folders, id) {
+    for (const folder of folders) {
+        if (folder.id === id) {
+            return folder;
+        }
+        if (folder.children) {
+            const found = findFolderById(folder.children, id);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+// ========== 滚动到文件夹 ==========
+function scrollToFolder(folderId) {
+    expandedFolders.add(folderId);
+    renderTree();
+    
+    setTimeout(() => {
+        const folderNode = document.querySelector(`[data-folder-id="${folderId}"]`);
+        if (folderNode) {
+            folderNode.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            folderNode.classList.add('highlight-folder');
+            setTimeout(() => {
+                folderNode.classList.remove('highlight-folder');
+            }, 2000);
+        }
+    }, 100);
+}
+
+// ========== 滚动到顶部 ==========
+function scrollToTop() {
+    const container = document.getElementById('treeContainer');
+    container.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ========== 检查用户认证 ==========
+async function checkAuth() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/current`, {
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            currentUser = result.data;
+            document.getElementById('userDisplay').textContent = `👋 ${currentUser.username}`;
+        } else {
+            // 未登录，跳转到登录页
+            window.location.href = 'login.html';
+        }
+    } catch (error) {
+        console.error('❌ 认证检查失败:', error);
+        window.location.href = 'login.html';
+    }
+}
+
+// ========== 处理登出 ==========
+async function handleLogout() {
+    if (!confirm('确定要登出吗？')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/auth/logout`, {
+            method: 'POST',
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('👋 已登出');
+            setTimeout(() => {
+                window.location.href = 'login.html';
+            }, 500);
+        }
+    } catch (error) {
+        console.error('❌ 登出失败:', error);
+        alert('登出失败！');
+    }
 }

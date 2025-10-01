@@ -37,6 +37,24 @@ body {
 
 .user-info {
     font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.btn-logout {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.btn-logout:hover {
+    background-color: rgba(255, 255, 255, 0.3);
 }
 
 /* ========== 主内容区域 ========== */
@@ -659,6 +677,43 @@ body {
 .empty-state-text {
     font-size: 14px;
     line-height: 1.6;
+}
+
+/* ========== 拖拽样式 ========== */
+.tree-node.dragging {
+    opacity: 0.5;
+    cursor: move;
+}
+
+.tree-node.drag-over {
+    background-color: #d9f7be;
+    border: 2px dashed #52c41a;
+}
+
+/* ========== 面包屑高亮动画 ========== */
+.highlight-folder {
+    background-color: #fff566 !important;
+    animation: highlightPulse 2s ease;
+}
+
+@keyframes highlightPulse {
+    0%, 100% { background-color: transparent; }
+    50% { background-color: #fff566; }
+}
+
+/* ========== 排序菜单样式 ========== */
+.sort-menu {
+    min-width: 150px;
+}
+
+.context-menu-item.active {
+    background-color: #e6f7ff;
+    color: #1890ff;
+}
+
+.context-menu-item.active::before {
+    content: '✓ ';
+    margin-right: 5px;
 }
 
 /* ========== 响应式设计 ========== */

@@ -17,7 +17,8 @@
         <header class="header">
             <h1>📚 我的文档系统</h1>
             <div class="user-info">
-                <span>欢迎使用</span>
+                <span id="userDisplay">加载中...</span>
+                <button class="btn-logout" id="btnLogout">登出</button>
             </div>
         </header>
 
@@ -28,9 +29,15 @@
                 <div class="sidebar-header">
                     <h2>知识库</h2>
                     <div class="header-buttons">
+                        <button class="btn-new btn-small" id="btnSort" title="排序">⇅</button>
                         <button class="btn-new btn-small" id="btnNewFolder" title="新建文件夹">📁+</button>
                         <button class="btn-new btn-small" id="btnNewDoc" title="新建文档">📄+</button>
                     </div>
+                </div>
+                
+                <!-- 面包屑导航 -->
+                <div class="breadcrumb" id="breadcrumb" style="display: none;">
+                    <span class="breadcrumb-item" data-folder-id="">📂 根目录</span>
                 </div>
                 
                 <!-- 搜索框 -->

@@ -1,8 +1,10 @@
 # ========== 导入必要的库 ==========
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, session
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import os
+import secrets
 
 # ========== 创建 Flask 应用 ==========
 app = Flask(__name__)
@@ -19,6 +21,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{DB_PATH}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JSON_AS_ASCII'] = False  # 支持中文
+app.config['SECRET_KEY'] = secrets.token_hex(16)  # Session 密钥
 
 # 初始化数据库
 db = SQLAlchemy(app)
@@ -30,6 +33,41 @@ print('=' * 50)
 
 # ========== 定义数据模型 ==========
 
+class User(db.Model):
+    """用户模型"""
+    __tablename__ = 'users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # 关联关系
+    documents = db.relationship('Document', backref='author', lazy=True)
+    folders = db.relationship('Folder', backref='owner', lazy=True)
+    
+    def set_password(self, password):
+        """设置密码（加密）"""
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        """验证密码"""
+        return check_password_hash(self.password_hash, password)
+    
+    def to_dict(self):
+        """将对象转换为字典"""
+        return {
+            'id': self.id,
+            'username': self.username,
+            'email': self.email,
+            'createdAt': self.created_at.isoformat()
+        }
+    
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+
 class Folder(db.Model):
     """文件夹模型"""
     __tablename__ = 'folders'
@@ -37,6 +75,7 @@ class Folder(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     parent_id = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -73,6 +112,7 @@ class Document(db.Model):
     title = db.Column(db.String(200), nullable=False)
     content = db.Column(db.Text, default='')
     folder_id = db.Column(db.Integer, db.ForeignKey('folders.id'), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -427,6 +467,140 @@ def get_tree():
             'success': False,
             'message': str(e)
         }), 500
+
+# ========== 用户认证 API ==========
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """用户注册"""
+    try:
+        data = request.get_json()
+        
+        # 验证必填字段
+        if not data or not data.get('username') or not data.get('email') or not data.get('password'):
+            return jsonify({
+                'success': False,
+                'message': '用户名、邮箱和密码不能为空'
+            }), 400
+        
+        # 检查用户名是否已存在
+        if User.query.filter_by(username=data['username']).first():
+            return jsonify({
+                'success': False,
+                'message': '用户名已存在'
+            }), 400
+        
+        # 检查邮箱是否已存在
+        if User.query.filter_by(email=data['email']).first():
+            return jsonify({
+                'success': False,
+                'message': '邮箱已被注册'
+            }), 400
+        
+        # 创建新用户
+        new_user = User(
+            username=data['username'],
+            email=data['email']
+        )
+        new_user.set_password(data['password'])
+        
+        db.session.add(new_user)
+        db.session.commit()
+        
+        # 自动登录
+        session['user_id'] = new_user.id
+        session['username'] = new_user.username
+        
+        print(f'✅ 用户注册成功: {new_user.username}')
+        
+        return jsonify({
+            'success': True,
+            'data': new_user.to_dict(),
+            'message': '注册成功'
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        print(f'❌ 注册失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """用户登录"""
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('username') or not data.get('password'):
+            return jsonify({
+                'success': False,
+                'message': '用户名和密码不能为空'
+            }), 400
+        
+        # 查找用户
+        user = User.query.filter_by(username=data['username']).first()
+        
+        if not user or not user.check_password(data['password']):
+            return jsonify({
+                'success': False,
+                'message': '用户名或密码错误'
+            }), 401
+        
+        # 设置 session
+        session['user_id'] = user.id
+        session['username'] = user.username
+        
+        print(f'✅ 用户登录成功: {user.username}')
+        
+        return jsonify({
+            'success': True,
+            'data': user.to_dict(),
+            'message': '登录成功'
+        })
+    except Exception as e:
+        print(f'❌ 登录失败: {str(e)}')
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    """用户登出"""
+    username = session.get('username', '未知用户')
+    session.clear()
+    print(f'✅ 用户登出: {username}')
+    
+    return jsonify({
+        'success': True,
+        'message': '登出成功'
+    })
+
+@app.route('/api/auth/current', methods=['GET'])
+def get_current_user():
+    """获取当前登录用户"""
+    user_id = session.get('user_id')
+    
+    if not user_id:
+        return jsonify({
+            'success': False,
+            'message': '未登录'
+        }), 401
+    
+    user = db.session.get(User, user_id)
+    
+    if not user:
+        session.clear()
+        return jsonify({
+            'success': False,
+            'message': '用户不存在'
+        }), 404
+    
+    return jsonify({
+        'success': True,
+        'data': user.to_dict()
+    })
 
 # ========== 启动应用 ==========
 if __name__ == '__main__':
